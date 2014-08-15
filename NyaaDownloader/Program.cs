@@ -47,9 +47,9 @@ namespace NyaaDownloader
             {
                 pageContents = new WebClient().DownloadString(url);
             }
-            catch (WebException exception)
+            catch (Exception exception)
             {
-                Console.WriteLine("Error: WebException for specified URL ({0})", url);
+                Console.WriteLine("Error: exception for specified URL ({0})", url);
             }
 
             return pageContents;
@@ -162,30 +162,85 @@ namespace NyaaDownloader
 
             return prettyName;
         }
-        
+
         static void Main(string[] args)
         {
-            var showName = "Sword Art Online II";
-            var subber = "HorribleSubs";
-            var resolution = "480";
+            // This prevents the framework from trying to autodetect proxy settings which can make the request
+            // extremely slow (up to an additional 30 seconds).
+            // http://www.nullskull.com/a/848/webclient-class-gotchas-and-basics.aspx
+            WebRequest.DefaultWebProxy = null;
+
+            if (args.Length != 4)
+            {
+                Console.WriteLine("Usage: NyaaDownloader.exe <SHOW NAME> <SUBBER> <RESOLUTION> <DOWNLOAD DIRECTORY>");
+                Console.WriteLine("Example: NyaaDownloader.exe \"Sword Art Online II\" \"HorribleSubs\" \"480\" \"C:\\Downloads\"");
+                Environment.Exit(0);
+            }
+
+            var showName = args[0].Trim();
+            var subber = args[1].Trim();
+            var resolution = args[2].Trim();
+            var downloadDirectory = args[3].Trim();
+
+            if (showName == string.Empty || subber == string.Empty || resolution == string.Empty || downloadDirectory == string.Empty)
+            {
+                Console.WriteLine("Error: none of the arguments can be empty, exiting...");
+                Environment.Exit(0);
+            }
+
+            if (!Directory.Exists(downloadDirectory))
+            {
+                Console.WriteLine("Error: the specified directory does not exist, exiting...");
+                Environment.Exit(0);
+            }
+
+            Console.WriteLine("\nWill now monitor and download for...");
+            Console.WriteLine("   Show: {0}", showName);
+            Console.WriteLine("   Subber: {0}", subber);
+            Console.WriteLine("   Resolution: {0}", resolution);
+            Console.WriteLine("Press any key to continue");
+
+            Console.ReadKey(true);
+
+            Console.WriteLine("\nLink Start!\n");
+
             var showData = new ShowData(showName.Trim(), subber.Trim(), resolution.Trim());
 
             var url = BuildUrl(showData);
 
-            var downloadProcessStartInfo = new ProcessStartInfo();
-            downloadProcessStartInfo.FileName = "aria2c.exe";
+            var downloadProcessStartInfo = new ProcessStartInfo {FileName = "aria2c.exe"};
 
             while (true)
             {
+                var existingEpisodes = new string[0];
+                try
+                {
+                    existingEpisodes = Directory.GetFiles(downloadDirectory)
+                        .Select(Path.GetFileName)
+                        .Where(x => x.ToLower().EndsWith(".mp4") || x.ToLower().EndsWith(".mkv"))
+                        .Select(PrettyPrintName)
+                        .Where(x => x.Contains(showData.ShowName)).ToArray();
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine("Error: exception encountered when reading download directory ({0}), exiting...", exception.Message);
+                    Environment.Exit(1);
+                }
+
+                foreach (var existingEpisode in existingEpisodes)
+                {
+                    Console.WriteLine(existingEpisode);
+                }
+
                 var pageContents = GetWebPageContents(url);
                 GetEpisodes(pageContents, showData);
                 showData.Episodes.ForEach(x => Console.WriteLine(x.Name + ", " + x.TorrentUrl));
 
-                foreach (var episode in showData.Episodes)
+                foreach (var episode in showData.Episodes.Where(episode => !existingEpisodes.Contains(episode.Name)))
                 {
                     try
                     {
-                        downloadProcessStartInfo.Arguments = "--seed-time=0 " + episode.TorrentUrl;
+                        downloadProcessStartInfo.Arguments = string.Format("--seed-time=0 --dir=\"{0}\" {1}", downloadDirectory, episode.TorrentUrl);
                         using (var downloadProcess = Process.Start(downloadProcessStartInfo))
                         {
                             downloadProcess.WaitForExit();
