@@ -60,13 +60,13 @@ namespace NyaaDownloader
             return pageContents;
         }
 
-        public static string BuildUrl(ShowData showData)
+        public static string BuildSearchUrl(ShowData showData)
         {
             return "http://www.nyaa.se/?term=" +
                    "%5B" + showData.Subber + "%5D+" + showData.ShowName.Replace(' ', '+') + "+" + showData.Resolution;
         }
 
-        public static void GetEpisodes(string pageContents, ShowData showData)
+        public static void GetOnlineEpisodes(string pageContents, ShowData showData)
         {
             showData.Episodes.Clear();
             
@@ -151,6 +151,26 @@ namespace NyaaDownloader
             }
 
             showData.Episodes.Reverse(); // oldest first
+        }
+
+        public static List<string> GetDownloadedEpisodes(string downloadDirectory, ShowData showData)
+        {
+            var downloadedEpisodes = new List<string>();
+            try
+            {
+                downloadedEpisodes = Directory.GetFiles(downloadDirectory)
+                    .Select(Path.GetFileName)
+                    .Where(x => x.ToLower().EndsWith(".mp4") || x.ToLower().EndsWith(".mkv"))
+                    .Select(PrettyPrintName)
+                    .Where(x => x.Contains(showData.ShowName)).ToList();
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine("Error: exception encountered when reading download directory ({0}), exiting...", exception.Message);
+                Environment.Exit(1);
+            }
+
+            return downloadedEpisodes;
         }
 
         public static string PrettyPrintName(string rawName)
@@ -255,48 +275,55 @@ namespace NyaaDownloader
             Console.WriteLine("\nLink Start!\n");
 
             var showData = new ShowData(showName.Trim(), subber.Trim(), resolution.Trim());
+            
+            var url = BuildSearchUrl(showData);
 
-            var url = BuildUrl(showData);
-
+            var previousCheckFoundNothingNew = false;
             while (true)
             {
-                var existingEpisodes = new string[0];
-                try
-                {
-                    existingEpisodes = Directory.GetFiles(downloadDirectory)
-                        .Select(Path.GetFileName)
-                        .Where(x => x.ToLower().EndsWith(".mp4") || x.ToLower().EndsWith(".mkv"))
-                        .Select(PrettyPrintName)
-                        .Where(x => x.Contains(showData.ShowName)).ToArray();
-                }
-                catch (Exception exception)
-                {
-                    Console.WriteLine("Error: exception encountered when reading download directory ({0}), exiting...", exception.Message);
-                    Environment.Exit(1);
-                }
-
+                var downloadedEpisodes = GetDownloadedEpisodes(downloadDirectory, showData);
                 if (Debug)
                 {
-                    foreach (var existingEpisode in existingEpisodes)
+                    Console.WriteLine("Downloaded Episodes:");
+                    downloadedEpisodes.ForEach(x => Console.WriteLine(" " + x));
+                }
+
+                GetOnlineEpisodes(GetWebPageContents(url), showData);
+                if (Debug)
+                {
+                    Console.WriteLine("Online Episodes:");
+                    showData.Episodes.ForEach(x => Console.WriteLine(" " + x.Name + ", " + x.TorrentUrl));
+                }
+
+                var episodesToDownload = showData.Episodes.Where(episode => !downloadedEpisodes.Contains(episode.Name)).ToList();
+                if (Debug)
+                {
+                    Console.WriteLine("Episodes to Download:");
+                    episodesToDownload.ForEach(x => Console.WriteLine(" " + x.Name + ", " + x.TorrentUrl));
+                }
+                
+                if (episodesToDownload.Count > 0)
+                {
+                    Console.WriteLine("\nFound {0} episodes to download! Starting...\n", episodesToDownload.Count);
+                    previousCheckFoundNothingNew = false;
+
+                    foreach (var episode in episodesToDownload)
                     {
-                        Console.WriteLine(existingEpisode);
+                        DownloadTorrent(episode.TorrentUrl, downloadDirectory);
                     }
                 }
-
-                var pageContents = GetWebPageContents(url);
-                GetEpisodes(pageContents, showData);
-
-                if (Debug)
+                else
                 {
-                    showData.Episodes.ForEach(x => Console.WriteLine(x.Name + ", " + x.TorrentUrl));
-                }
+                    if (previousCheckFoundNothingNew)
+                        Console.SetCursorPosition(0, Console.CursorTop - 1);
 
-                foreach (var episode in showData.Episodes.Where(episode => !existingEpisodes.Contains(episode.Name)))
-                {
-                    DownloadTorrent(episode.TorrentUrl, downloadDirectory);
-                }
+                    Console.WriteLine("Nothing to download at this time, waiting...");
+                    previousCheckFoundNothingNew = true;
 
-                break;
+                    // monitor every minute
+                    var waitDuration = DateTime.Now.AddMinutes(1) - DateTime.Now;
+                    Thread.Sleep(waitDuration);
+                }
             }
         }
     }
