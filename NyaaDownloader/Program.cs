@@ -2,11 +2,16 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using MonoTorrent.Client;
+using MonoTorrent.Client.Encryption;
+using MonoTorrent.Common;
 
 namespace NyaaDownloader
 {
@@ -163,6 +168,51 @@ namespace NyaaDownloader
             return prettyName;
         }
 
+        public static void DownloadTorrent(string url, string downloadDirectory)
+        {
+            var torrentManager =
+                new TorrentManager(
+                    Torrent.Load(new Uri(url),
+                                 string.Format("{0}.torrent", url.GetHashCode().ToString(CultureInfo.InvariantCulture))),
+                    downloadDirectory,
+                    new TorrentSettings());
+            
+            var engineSettings = new EngineSettings(downloadDirectory, 52138)
+                                     {
+                                         PreferEncryption = false,
+                                         AllowedEncryption = EncryptionTypes.All
+                                     };
+
+            var engine = new ClientEngine(engineSettings);
+
+            engine.Register(torrentManager);
+            engine.StartAll();
+
+            while (true)
+            {
+                var status = string.Format("{0:0.00}% - {1}\nDL:{2:0.00} kB/s    \nUL:{3:0.00} kB/s    ",
+                                           torrentManager.Progress,
+                                           torrentManager.Torrent.Name,
+                                           torrentManager.Monitor.DownloadSpeed/1024.0,
+                                           torrentManager.Monitor.UploadSpeed/1024.0);
+
+                var cursorPosition = new Tuple<int, int>(Console.CursorLeft, Console.CursorTop);
+                Console.WriteLine(status);
+
+                if (torrentManager.State == TorrentState.Seeding)
+                {
+                    Console.WriteLine();
+                    break;
+                }
+
+                Console.SetCursorPosition(cursorPosition.Item1, cursorPosition.Item2);
+
+                Thread.Sleep(500);
+            }
+        }
+
+        private const bool Debug = false;
+
         static void Main(string[] args)
         {
             // This prevents the framework from trying to autodetect proxy settings which can make the request
@@ -208,8 +258,6 @@ namespace NyaaDownloader
 
             var url = BuildUrl(showData);
 
-            var downloadProcessStartInfo = new ProcessStartInfo {FileName = "aria2c.exe"};
-
             while (true)
             {
                 var existingEpisodes = new string[0];
@@ -227,30 +275,25 @@ namespace NyaaDownloader
                     Environment.Exit(1);
                 }
 
-                foreach (var existingEpisode in existingEpisodes)
+                if (Debug)
                 {
-                    Console.WriteLine(existingEpisode);
+                    foreach (var existingEpisode in existingEpisodes)
+                    {
+                        Console.WriteLine(existingEpisode);
+                    }
                 }
 
                 var pageContents = GetWebPageContents(url);
                 GetEpisodes(pageContents, showData);
-                showData.Episodes.ForEach(x => Console.WriteLine(x.Name + ", " + x.TorrentUrl));
+
+                if (Debug)
+                {
+                    showData.Episodes.ForEach(x => Console.WriteLine(x.Name + ", " + x.TorrentUrl));
+                }
 
                 foreach (var episode in showData.Episodes.Where(episode => !existingEpisodes.Contains(episode.Name)))
                 {
-                    try
-                    {
-                        downloadProcessStartInfo.Arguments = string.Format("--seed-time=0 --dir=\"{0}\" {1}", downloadDirectory, episode.TorrentUrl);
-                        using (var downloadProcess = Process.Start(downloadProcessStartInfo))
-                        {
-                            downloadProcess.WaitForExit();
-                        }
-                    }
-                    catch (Win32Exception exception)
-                    {
-                        Console.WriteLine("Error: error when executing downloader ({0}), exiting...", exception.Message);
-                        Environment.Exit(1);
-                    }
+                    DownloadTorrent(episode.TorrentUrl, downloadDirectory);
                 }
 
                 break;
