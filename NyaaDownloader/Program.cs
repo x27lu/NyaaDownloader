@@ -6,12 +6,15 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using MonoTorrent.Client;
 using MonoTorrent.Client.Encryption;
 using MonoTorrent.Common;
+using MonoTorrent.Dht;
+using MonoTorrent.Dht.Listeners;
 
 namespace NyaaDownloader
 {
@@ -188,7 +191,7 @@ namespace NyaaDownloader
             return prettyName;
         }
 
-        public static void DownloadTorrent(string url, string downloadDirectory)
+        public static void DownloadTorrent(string url, string downloadDirectory, int maxUploadSpeed)
         {
             var torrentManager =
                 new TorrentManager(
@@ -196,16 +199,29 @@ namespace NyaaDownloader
                                  string.Format("{0}.torrent", url.GetHashCode().ToString(CultureInfo.InvariantCulture))),
                     downloadDirectory,
                     new TorrentSettings());
-            
-            var engineSettings = new EngineSettings(downloadDirectory, 52138)
+
+            // find an unused port
+            var listener = new TcpListener(IPAddress.Any, 0);
+            listener.Start();
+            var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+
+            var engineSettings = new EngineSettings(downloadDirectory, port)
                                      {
                                          PreferEncryption = false,
-                                         AllowedEncryption = EncryptionTypes.All
+                                         AllowedEncryption = EncryptionTypes.All,
+                                         GlobalMaxUploadSpeed = maxUploadSpeed
                                      };
 
+            var dhtListner = new DhtListener(new IPEndPoint(IPAddress.Any, port));
+            var dht = new DhtEngine(dhtListner);
+            
             var engine = new ClientEngine(engineSettings);
-
             engine.Register(torrentManager);
+            engine.RegisterDht(dht);
+            dhtListner.Start();
+            engine.DhtEngine.Start();
+            
             engine.StartAll();
 
             while (true)
@@ -229,6 +245,8 @@ namespace NyaaDownloader
 
                 Thread.Sleep(500);
             }
+
+            engine.Dispose();
         }
 
         private const bool Debug = false;
@@ -309,7 +327,7 @@ namespace NyaaDownloader
 
                     foreach (var episode in episodesToDownload)
                     {
-                        DownloadTorrent(episode.TorrentUrl, downloadDirectory);
+                        DownloadTorrent(episode.TorrentUrl, downloadDirectory, 25);
                     }
                 }
                 else
