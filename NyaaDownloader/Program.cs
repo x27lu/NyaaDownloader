@@ -246,6 +246,9 @@ namespace NyaaDownloader
                 Thread.Sleep(500);
             }
 
+            dhtListner.Stop();
+            engine.DhtEngine.Stop();
+            engine.StopAll();
             engine.Dispose();
         }
 
