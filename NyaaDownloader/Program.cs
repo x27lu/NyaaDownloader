@@ -10,6 +10,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using CommandLine;
 using MonoTorrent.Client;
 using MonoTorrent.Client.Encryption;
 using MonoTorrent.Common;
@@ -47,6 +48,25 @@ namespace NyaaDownloader
     
     public class Program
     {
+        private const string UsageString =
+            "Usage: NyaaDownloader.exe [<OPTIONS>] <SHOW NAME> <SUBBER> <DOWNLOAD DIRECTORY>\n"
+            + "Example: NyaaDownloader.exe -r 480 -m 4161231234 \"Sword Art Online II\" \"HorribleSubs\" \"C:\\Downloads\"";
+        
+        private class Options
+        {
+            [Option('r', "resolution", Required = false, HelpText = "Resolution")]
+            public string Resolution { get; set; }
+
+            [Option('m', "sms-receiver", Required = false, HelpText = "Phone # to receive SMS notifications")]
+            public string SmsReceiver { get; set; }
+
+            [HelpOption]
+            public string GetUsage()
+            {
+                return UsageString;
+            }
+        }
+
         public static string GetWebPageContents(string url)
         {
             var pageContents = string.Empty;
@@ -65,8 +85,13 @@ namespace NyaaDownloader
 
         public static string BuildSearchUrl(ShowData showData)
         {
-            return "http://www.nyaa.se/?term=" +
-                   "%5B" + showData.Subber + "%5D+" + showData.ShowName.Replace(' ', '+') + "+" + showData.Resolution;
+            var url = "http://www.nyaa.se/?term=" +
+                      "%5B" + showData.Subber + "%5D+" + showData.ShowName.Replace(' ', '+');
+
+            if (showData.Resolution != string.Empty)
+                url += "+" + showData.Resolution;
+            
+            return url;
         }
 
         public static void GetOnlineEpisodes(string pageContents, ShowData showData)
@@ -193,10 +218,11 @@ namespace NyaaDownloader
 
         public static void DownloadTorrent(string url, string downloadDirectory, int maxUploadSpeed)
         {
+            var torrentFileName = string.Format("{0}.torrent", url.GetHashCode().ToString(CultureInfo.InvariantCulture));
+            
             var torrentManager =
                 new TorrentManager(
-                    Torrent.Load(new Uri(url),
-                                 string.Format("{0}.torrent", url.GetHashCode().ToString(CultureInfo.InvariantCulture))),
+                    Torrent.Load(new Uri(url), torrentFileName),
                     downloadDirectory,
                     new TorrentSettings());
 
@@ -250,6 +276,8 @@ namespace NyaaDownloader
             engine.DhtEngine.Stop();
             engine.StopAll();
             engine.Dispose();
+            
+            File.Delete(torrentFileName);
         }
 
         private const bool Debug = false;
@@ -261,19 +289,26 @@ namespace NyaaDownloader
             // http://www.nullskull.com/a/848/webclient-class-gotchas-and-basics.aspx
             WebRequest.DefaultWebProxy = null;
 
-            if (args.Length != 4)
+            if (args.Length < 3)
             {
-                Console.WriteLine("Usage: NyaaDownloader.exe <SHOW NAME> <SUBBER> <RESOLUTION> <DOWNLOAD DIRECTORY>");
-                Console.WriteLine("Example: NyaaDownloader.exe \"Sword Art Online II\" \"HorribleSubs\" \"480\" \"C:\\Downloads\"");
+                Console.WriteLine(UsageString);
                 Environment.Exit(0);
             }
 
-            var showName = args[0].Trim();
-            var subber = args[1].Trim();
-            var resolution = args[2].Trim();
-            var downloadDirectory = args[3].Trim();
+            var options = new Options();
+            var parser = new Parser();
 
-            if (showName == string.Empty || subber == string.Empty || resolution == string.Empty || downloadDirectory == string.Empty)
+            if (!parser.ParseArguments(new List<string>(args).GetRange(0, args.Length - 3).ToArray(), options))
+            {
+                Console.WriteLine(UsageString);
+                Environment.Exit(0);
+            }
+
+            var showName = args[args.Length - 3].Trim();
+            var subber = args[args.Length - 2].Trim();
+            var downloadDirectory = args[args.Length - 1].Trim();
+
+            if (showName == string.Empty || subber == string.Empty || downloadDirectory == string.Empty)
             {
                 Console.WriteLine("Error: none of the arguments can be empty, exiting...");
                 Environment.Exit(0);
@@ -285,18 +320,20 @@ namespace NyaaDownloader
                 Environment.Exit(0);
             }
 
-            Console.WriteLine("\nWill now monitor and download for...");
-            Console.WriteLine("   Show: {0}", showName);
-            Console.WriteLine("   Subber: {0}", subber);
-            Console.WriteLine("   Resolution: {0}", resolution);
-            Console.WriteLine("Press any key to continue");
+            var showData = new ShowData(showName.Trim(), subber.Trim(), options.Resolution.Trim());
 
+
+            Console.WriteLine("\nWill now monitor and download for...");
+            Console.WriteLine("   Show: {0}", showData.ShowName);
+            Console.WriteLine("   Subber: {0}", showData.Subber);
+            if (showData.Resolution != string.Empty)
+                Console.WriteLine("   Resolution: {0}", showData.Resolution);
+            
+            Console.WriteLine("Press any key to continue");
             Console.ReadKey(true);
 
             Console.WriteLine("\nLink Start!\n");
 
-            var showData = new ShowData(showName.Trim(), subber.Trim(), resolution.Trim());
-            
             var url = BuildSearchUrl(showData);
 
             var previousCheckFoundNothingNew = false;
@@ -331,6 +368,11 @@ namespace NyaaDownloader
                     foreach (var episode in episodesToDownload)
                     {
                         DownloadTorrent(episode.TorrentUrl, downloadDirectory, 25);
+                        if (options.SmsReceiver != string.Empty)
+                        {
+                            Console.WriteLine("Sending SMS...\n");
+                            Process.Start("SMSUtil.exe", "\"" + options.SmsReceiver + "\" \"'" + episode.Name + "' has finished downloading\"");
+                        }
                     }
                 }
                 else

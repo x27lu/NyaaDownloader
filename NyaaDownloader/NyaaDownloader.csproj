@@ -34,6 +34,9 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="CommandLine">
+      <HintPath>..\3rdParty\CommandLine.dll</HintPath>
+    </Reference>
     <Reference Include="MonoTorrent">
       <HintPath>..\3rdParty\MonoTorrent.dll</HintPath>
     </Reference>
