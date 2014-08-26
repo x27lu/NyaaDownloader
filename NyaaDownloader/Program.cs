@@ -320,7 +320,10 @@ namespace NyaaDownloader
                 Environment.Exit(0);
             }
 
-            var showData = new ShowData(showName.Trim(), subber.Trim(), options.Resolution.Trim());
+            var showData = new ShowData(
+                showName.Trim(),
+                subber.Trim(),
+                options.Resolution != null ? options.Resolution.Trim() : string.Empty);
 
 
             Console.WriteLine("\nWill now monitor and download for...");
@@ -368,7 +371,7 @@ namespace NyaaDownloader
                     foreach (var episode in episodesToDownload)
                     {
                         DownloadTorrent(episode.TorrentUrl, downloadDirectory, 25);
-                        if (options.SmsReceiver != string.Empty)
+                        if (!String.IsNullOrEmpty(options.SmsReceiver))
                         {
                             Console.WriteLine("Sending SMS...\n");
                             Process.Start("SMSUtil.exe", "\"" + options.SmsReceiver + "\" \"'" + episode.Name + "' has finished downloading\"");
